@@ -1,0 +1,17 @@
+
+services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: telegram-bot-api
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: "34034295"
+      TELEGRAM_API_HASH: "4c2ed7e915b4c572b15ba8ae29efc6fc"
+      TELEGRAM_LOCAL: "1"
+    ports:
+      - "8081:8081"
+    volumes:
+      - telegram-bot-api-data:/var/lib/telegram-bot-api
+
+volumes:
+  telegram-bot-api-data:
