@@ -9,6 +9,9 @@ services:
       TELEGRAM_API_ID: "${TELEGRAM_API_ID:?not specified in .env}"
       TELEGRAM_API_HASH: "${TELEGRAM_API_HASH:?not specified in .env}"
       TELEGRAM_LOCAL: "1"
+      # Слушать IPv6: приватная сеть Railway резолвит только AAAA-записи.
+      # Локально не мешает, поэтому держим одинаково в обоих окружениях.
+      TELEGRAM_HTTP_IP_ADDRESS: "[::]"
     ports:
       - "8081:8081"
     volumes:
