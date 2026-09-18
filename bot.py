@@ -92,6 +92,21 @@ def _materialize_cookies() -> str | None:
 
 COOKIES_PATH = _materialize_cookies()
 
+def _check_pot_plugin() -> None:
+    """Проверяет, что модуль плагина bgutil есть в образе. Реестр провайдеров
+    здесь читать нельзя — он заполняется только при создании YoutubeDL."""
+    try:
+        import yt_dlp_plugins.extractor.getpot_bgutil_http  # noqa: F401
+    except ImportError as e:
+        logger.error(
+            "Плагин bgutil НЕ установлен в образе (%s). PO token запрашиваться "
+            "не будет, YouTube заблокирует запросы.",
+            e,
+        )
+    else:
+        logger.info("Плагин bgutil установлен.")
+
+
 def _check_pot_provider() -> None:
     """Проверяет, отвечает ли PO token provider. Приватная сеть Railway
     работает по IPv6, поэтому сбой здесь — почти всегда сетевая проблема."""
@@ -117,6 +132,7 @@ def _check_pot_provider() -> None:
 
 if POT_PROVIDER_URL:
     logger.info("PO token provider: %s", POT_PROVIDER_URL)
+    _check_pot_plugin()
     _check_pot_provider()
 elif not COOKIES_PATH:
     logger.warning(
