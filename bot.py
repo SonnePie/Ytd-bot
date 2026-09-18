@@ -19,14 +19,16 @@ if not BOT_TOKEN:
     raise RuntimeError(
         "Не задано BOT_TOKEN. Створи файл .env на основі .env.example")
 
-# Адрес локального Bot API Server (поднимается отдельно, см. README)
-LOCAL_API_BASE_URL = os.getenv("LOCAL_API_BASE_URL", "http://localhost:8081")
+# Адрес локального Bot API Server (поднимается отдельно, см. README).
+# Пусто / не задано — работаем через api.telegram.org.
+LOCAL_API_BASE_URL = os.getenv("LOCAL_API_BASE_URL", "").strip()
+USE_LOCAL_API = bool(LOCAL_API_BASE_URL)
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # На локальном Bot API Server лимит на отправку файлов — 2 ГБ вместо 50 МБ
-MAX_FILESIZE_MB = 2000
+MAX_FILESIZE_MB = 2000 if USE_LOCAL_API else 50
 
 YOUTUBE_URL_RE = re.compile(
     r"(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)[\w\-]+"
@@ -35,9 +37,19 @@ YOUTUBE_URL_RE = re.compile(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-local_server = TelegramAPIServer.from_base(LOCAL_API_BASE_URL, is_local=True)
-session = AiohttpSession(api=local_server)
-bot = Bot(token=BOT_TOKEN, session=session)
+if USE_LOCAL_API:
+    local_server = TelegramAPIServer.from_base(LOCAL_API_BASE_URL, is_local=True)
+    bot = Bot(token=BOT_TOKEN, session=AiohttpSession(api=local_server))
+    logger.info(
+        "Локальный Bot API Server: %s (лимит %d МБ)", LOCAL_API_BASE_URL, MAX_FILESIZE_MB
+    )
+else:
+    bot = Bot(token=BOT_TOKEN)
+    logger.info(
+        "api.telegram.org (лимит %d МБ). Задай LOCAL_API_BASE_URL для лимита 2 ГБ.",
+        MAX_FILESIZE_MB,
+    )
+
 dp = Dispatcher()
 
 
