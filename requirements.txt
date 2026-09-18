@@ -1,3 +1,7 @@
 aiogram>=3.4,<4
-yt-dlp>=2024.1.0
+yt-dlp>=2025.1.1
 python-dotenv>=1.0
+# Плагин запрашивает PO token у сервиса bgutil-pot-provider.
+# Без него YouTube отвечает "Sign in to confirm you're not a bot"
+# на запросы с IP дата-центра.
+bgutil-ytdlp-pot-provider>=1.1.0

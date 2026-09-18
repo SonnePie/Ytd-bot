@@ -1,17 +1,39 @@
-
 services:
   telegram-bot-api:
     image: aiogram/telegram-bot-api:latest
     container_name: telegram-bot-api
     restart: unless-stopped
     environment:
-      TELEGRAM_API_ID: "34034295"
-      TELEGRAM_API_HASH: "4c2ed7e915b4c572b15ba8ae29efc6fc"
+      # Значения берутся из .env в корне проекта (он не коммитится).
+      # Получить: https://my.telegram.org -> API development tools
+      TELEGRAM_API_ID: "${TELEGRAM_API_ID:?не задан в .env}"
+      TELEGRAM_API_HASH: "${TELEGRAM_API_HASH:?не задан в .env}"
       TELEGRAM_LOCAL: "1"
     ports:
       - "8081:8081"
     volumes:
       - telegram-bot-api-data:/var/lib/telegram-bot-api
+
+  # Выдаёт PO token, без которого YouTube отвечает
+  # "Sign in to confirm you're not a bot" на запросы с IP дата-центра
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: pot-provider
+    restart: unless-stopped
+    # Порт наружу не публикуем: сервис нужен только боту внутри сети compose
+
+  bot:
+    build: .
+    container_name: yt-audio-bot
+    restart: unless-stopped
+    depends_on:
+      - telegram-bot-api
+      - pot-provider
+    environment:
+      BOT_TOKEN: "${BOT_TOKEN:?не задан в .env}"
+      # Локальный Bot API Server поднимает лимит файла с 50 МБ до 2 ГБ
+      LOCAL_API_BASE_URL: "http://telegram-bot-api:8081"
+      POT_PROVIDER_URL: "http://pot-provider:4416"
 
 volumes:
   telegram-bot-api-data:

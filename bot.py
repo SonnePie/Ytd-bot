@@ -31,10 +31,15 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # YouTube блокирует запросы с IP дата-центров ("Sign in to confirm you're not a
-# bot"). Обход — передать cookies залогиненного аккаунта.
+# bot"). Основной обход — PO token (proof-of-origin): его выдаёт отдельный
+# сервис bgutil-ytdlp-pot-provider, аккаунт и cookies при этом не нужны.
+# Адрес вида http://pot-provider.railway.internal:4416
+POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "").strip()
+
+# Резервный путь — cookies залогиненного аккаунта. Файл даёт полный доступ к
+# аккаунту, поэтому используй одноразовый профиль, а не основной.
 # COOKIES_FILE — путь к файлу в формате Netscape.
-# YOUTUBE_COOKIES_B64 — тот же файл в base64, чтобы задать его переменной
-# окружения на хостинге, где нельзя положить файл в образ.
+# YOUTUBE_COOKIES_B64 — тот же файл в base64, для хостинга без доступа к ФС.
 COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt").strip()
 COOKIES_B64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
 
@@ -77,14 +82,19 @@ def _materialize_cookies() -> str | None:
         logger.info("Использую cookies из %s", COOKIES_FILE)
         return COOKIES_FILE
 
-    logger.warning(
-        "Cookies не заданы. На IP дата-центра YouTube, скорее всего, ответит "
-        "'Sign in to confirm you're not a bot'. Задай YOUTUBE_COOKIES_B64."
-    )
+    logger.info("Cookies не заданы — работаем без них.")
     return None
 
 
 COOKIES_PATH = _materialize_cookies()
+
+if POT_PROVIDER_URL:
+    logger.info("PO token provider: %s", POT_PROVIDER_URL)
+elif not COOKIES_PATH:
+    logger.warning(
+        "Ни POT_PROVIDER_URL, ни cookies не заданы. На IP дата-центра YouTube, "
+        "скорее всего, ответит 'Sign in to confirm you're not a bot'."
+    )
 
 if USE_LOCAL_API:
     local_server = TelegramAPIServer.from_base(LOCAL_API_BASE_URL, is_local=True)
@@ -125,6 +135,13 @@ def download_audio(url: str, out_path_no_ext: str) -> str:
     }
     if COOKIES_PATH:
         ydl_opts["cookiefile"] = COOKIES_PATH
+
+    if POT_PROVIDER_URL:
+        # Плагин bgutil-ytdlp-pot-provider читает base_url из extractor_args
+        # и сам запрашивает PO token у сервиса перед обращением к YouTube
+        ydl_opts["extractor_args"] = {
+            "youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_URL]}
+        }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         # download=False сначала: 192 kbps ≈ 24 КБ/с, поэтому по длительности
@@ -182,10 +199,15 @@ async def handle_message(message: Message):
     except Exception as e:
         logger.exception("Ошибка при обработке %s", url)
         if any(marker in str(e).lower() for marker in BOT_CHECK_MARKERS):
+            logger.error(
+                "YouTube bot-check. POT_PROVIDER_URL=%r, cookies=%r",
+                POT_PROVIDER_URL or None,
+                COOKIES_PATH,
+            )
             await status_msg.edit_text(
                 "YouTube вимагає підтвердження, що запит не від бота — таке буває "
-                "для запитів із дата-центру. Потрібно додати cookies "
-                "(змінна YOUTUBE_COOKIES_B64)."
+                "для запитів із дата-центру. Адміну варто перевірити сервіс "
+                "PO token (POT_PROVIDER_URL)."
             )
         else:
             await status_msg.edit_text(f"Не вдалося завантажити аудіо: {e}")
