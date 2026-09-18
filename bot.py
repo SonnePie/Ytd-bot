@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import binascii
+import glob
 import logging
 import os
 import re
@@ -27,6 +30,14 @@ USE_LOCAL_API = bool(LOCAL_API_BASE_URL)
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# YouTube блокирует запросы с IP дата-центров ("Sign in to confirm you're not a
+# bot"). Обход — передать cookies залогиненного аккаунта.
+# COOKIES_FILE — путь к файлу в формате Netscape.
+# YOUTUBE_COOKIES_B64 — тот же файл в base64, чтобы задать его переменной
+# окружения на хостинге, где нельзя положить файл в образ.
+COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt").strip()
+COOKIES_B64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
+
 # На локальном Bot API Server лимит на отправку файлов — 2 ГБ вместо 50 МБ
 MAX_FILESIZE_MB = 2000 if USE_LOCAL_API else 50
 
@@ -36,6 +47,44 @@ YOUTUBE_URL_RE = re.compile(
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Одновременная конвертация в несколько потоков душит shared-CPU контейнер
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(1)
+
+BOT_CHECK_MARKERS = ("confirm you", "not a bot", "sign in to")
+
+
+def _materialize_cookies() -> str | None:
+    """Готовит cookies-файл для yt-dlp. Возвращает путь либо None."""
+    if COOKIES_B64:
+        try:
+            data = base64.b64decode(COOKIES_B64, validate=True)
+        except (binascii.Error, ValueError):
+            logger.error(
+                "YOUTUBE_COOKIES_B64 не является корректным base64 — cookies проигнорированы"
+            )
+        else:
+            try:
+                with open(COOKIES_FILE, "wb") as fh:
+                    fh.write(data)
+            except OSError:
+                logger.exception("Не удалось записать cookies в %s", COOKIES_FILE)
+            else:
+                logger.info("Cookies записаны из YOUTUBE_COOKIES_B64 в %s", COOKIES_FILE)
+                return COOKIES_FILE
+
+    if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+        logger.info("Использую cookies из %s", COOKIES_FILE)
+        return COOKIES_FILE
+
+    logger.warning(
+        "Cookies не заданы. На IP дата-центра YouTube, скорее всего, ответит "
+        "'Sign in to confirm you're not a bot'. Задай YOUTUBE_COOKIES_B64."
+    )
+    return None
+
+
+COOKIES_PATH = _materialize_cookies()
 
 if USE_LOCAL_API:
     local_server = TelegramAPIServer.from_base(LOCAL_API_BASE_URL, is_local=True)
@@ -74,7 +123,20 @@ def download_audio(url: str, out_path_no_ext: str) -> str:
         "quiet": True,
         "no_warnings": True,
     }
+    if COOKIES_PATH:
+        ydl_opts["cookiefile"] = COOKIES_PATH
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # download=False сначала: 192 kbps ≈ 24 КБ/с, поэтому по длительности
+        # видно размер до того, как тратить CPU и трафик на конвертацию
+        probe = ydl.extract_info(url, download=False)
+        duration = probe.get("duration") or 0
+        estimated_mb = duration * 24 / 1024
+        if estimated_mb > MAX_FILESIZE_MB:
+            raise ValueError(
+                f"Відео задовге: ~{estimated_mb:.0f} МБ при ліміті {MAX_FILESIZE_MB} МБ"
+            )
+
         info = ydl.extract_info(url, download=True)
         title = info.get("title", "audio")
     return out_path_no_ext + ".mp3", title
@@ -100,9 +162,10 @@ async def handle_message(message: Message):
 
     try:
         loop = asyncio.get_running_loop()
-        mp3_path, title = await loop.run_in_executor(
-            None, download_audio, url, out_path_no_ext
-        )
+        async with DOWNLOAD_SEMAPHORE:
+            mp3_path, title = await loop.run_in_executor(
+                None, download_audio, url, out_path_no_ext
+            )
 
         size_mb = os.path.getsize(mp3_path) / (1024 * 1024)
         if size_mb > MAX_FILESIZE_MB:
@@ -118,14 +181,23 @@ async def handle_message(message: Message):
 
     except Exception as e:
         logger.exception("Ошибка при обработке %s", url)
-        await status_msg.edit_text(f"Не вдалося завантажити аудіо: {e}")
+        if any(marker in str(e).lower() for marker in BOT_CHECK_MARKERS):
+            await status_msg.edit_text(
+                "YouTube вимагає підтвердження, що запит не від бота — таке буває "
+                "для запитів із дата-центру. Потрібно додати cookies "
+                "(змінна YOUTUBE_COOKIES_B64)."
+            )
+        else:
+            await status_msg.edit_text(f"Не вдалося завантажити аудіо: {e}")
 
     finally:
-        # Убираем временные файлы
-        for ext in (".mp3", ".webm", ".m4a", ".part"):
-            path = out_path_no_ext + ext
-            if os.path.exists(path):
+        # yt-dlp оставляет не только .mp3/.webm, но и .f140.*, .opus, .part —
+        # поэтому чистим по маске, а не по списку расширений
+        for path in glob.glob(out_path_no_ext + "*"):
+            try:
                 os.remove(path)
+            except OSError:
+                logger.warning("Не удалось удалить временный файл %s", path)
 
 
 async def main():
