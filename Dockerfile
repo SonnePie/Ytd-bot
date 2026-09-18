@@ -1,12 +1,19 @@
 FROM python:3.12-slim
 
-# ffmpeg  — нужен постпроцессору FFmpegExtractAudio
-# nodejs  — JS-движок для решения JS-challenge от YouTube. Без него yt-dlp
-#           пишет "JS Challenge Providers: node (unavailable)" и запрос
-#           упирается в проверку "Sign in to confirm you're not a bot"
+# ffmpeg — нужен постпроцессору FFmpegExtractAudio
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates nodejs \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Node нужен для решения JS-challenge от YouTube: без него yt-dlp пишет
+# "JS Challenge Providers: node (unavailable)" и запрос упирается в проверку
+# "Sign in to confirm you're not a bot".
+# Версия критична: yt-dlp требует node >= 23.5.0 (см. jsc/_builtin/node.py),
+# а в Debian-репозитории только 20.x, который помечается как unsupported.
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version
 
 WORKDIR /app
 

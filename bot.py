@@ -181,12 +181,20 @@ def download_audio(url: str, out_path_no_ext: str) -> str:
     if COOKIES_PATH:
         ydl_opts["cookiefile"] = COOKIES_PATH
 
+    # player_client намеренно не задаём: yt-dlp сам подбирает клиента, и его
+    # список меняется вместе с защитой YouTube. Проверка показала, что любой
+    # принудительный клиент (web_safari, web, mweb, tv_simply) даёт
+    # "No video formats found", а выбор по умолчанию — 24 формата.
+    extractor_args = {}
     if POT_PROVIDER_URL:
         # Плагин bgutil-ytdlp-pot-provider читает base_url из extractor_args
         # и сам запрашивает PO token у сервиса перед обращением к YouTube
-        ydl_opts["extractor_args"] = {
-            "youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_URL]}
-        }
+        extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
+    ydl_opts["extractor_args"] = extractor_args
+
+    # Без этого yt-dlp включает только deno и помечает установленный в образе
+    # node как unavailable, из-за чего JS challenge от YouTube не решается
+    ydl_opts["js_runtimes"] = {"node": {}}
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         # download=False сначала: 192 kbps ≈ 24 КБ/с, поэтому по длительности
