@@ -36,6 +36,10 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Адрес вида http://pot-provider.railway.internal:4416
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "").strip()
 
+# YTDLP_VERBOSE=1 включает подробный лог yt-dlp — видно, дошёл ли запрос
+# до PO token provider и что он ответил
+YTDLP_VERBOSE = os.getenv("YTDLP_VERBOSE", "").strip() not in ("", "0", "false")
+
 # Резервный путь — cookies залогиненного аккаунта. Файл даёт полный доступ к
 # аккаунту, поэтому используй одноразовый профиль, а не основной.
 # COOKIES_FILE — путь к файлу в формате Netscape.
@@ -88,8 +92,32 @@ def _materialize_cookies() -> str | None:
 
 COOKIES_PATH = _materialize_cookies()
 
+def _check_pot_provider() -> None:
+    """Проверяет, отвечает ли PO token provider. Приватная сеть Railway
+    работает по IPv6, поэтому сбой здесь — почти всегда сетевая проблема."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(POT_PROVIDER_URL + "/ping", timeout=10) as resp:
+            logger.info(
+                "PO token provider отвечает: HTTP %s, %s",
+                resp.status,
+                resp.read(200).decode("utf-8", "replace").strip(),
+            )
+    except Exception as e:
+        logger.error(
+            "PO token provider НЕДОСТУПЕН по %s (%s: %s). YouTube будет "
+            "требовать подтверждение 'not a bot'.",
+            POT_PROVIDER_URL,
+            type(e).__name__,
+            e,
+        )
+
+
 if POT_PROVIDER_URL:
     logger.info("PO token provider: %s", POT_PROVIDER_URL)
+    _check_pot_provider()
 elif not COOKIES_PATH:
     logger.warning(
         "Ни POT_PROVIDER_URL, ни cookies не заданы. На IP дата-центра YouTube, "
@@ -130,8 +158,9 @@ def download_audio(url: str, out_path_no_ext: str) -> str:
             }
         ],
         "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": not YTDLP_VERBOSE,
+        "no_warnings": not YTDLP_VERBOSE,
+        "verbose": YTDLP_VERBOSE,
     }
     if COOKIES_PATH:
         ydl_opts["cookiefile"] = COOKIES_PATH
